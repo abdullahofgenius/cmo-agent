@@ -78,12 +78,93 @@ function inspectLinks(html: string, pageUrl: string) {
   return { internal, external };
 }
 
+/** Walk a parsed JSON value and collect human-readable leaf strings (drops URLs, ids, short tokens). */
+function collectStrings(value: unknown, out: string[], seen: Set<unknown>): void {
+  if (value === null || value === undefined || typeof value === "number" || typeof value === "boolean") return;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (
+      text.length >= 2 &&
+      !/^https?:\/\//i.test(text) &&
+      !/^[\w.+-]+@[\w.-]+$/.test(text) &&
+      !/^\d{6,}$/.test(text) &&
+      /[\p{L}]/u.test(text)
+    ) {
+      out.push(text);
+    }
+    return;
+  }
+  if (seen.has(value)) return;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) collectStrings(item, out, seen);
+    return;
+  }
+  if (typeof value === "object") {
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      const child = (value as Record<string, unknown>)[key];
+      if (key === "url" || key === "logo" || key === "image" || key === "thumbnailUrl") continue;
+      collectStrings(child, out, seen);
+    }
+  }
+}
+
+/** Extract content that sites bake into the HTML as JSON (Next.js, Nuxt, JSON-LD). Free way to read JS-heavy sites without a browser. */
+function collectEmbeddedText(html: string): string {
+  const fragments: string[] = [];
+  const scripts = html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gi) || [];
+
+  for (const script of scripts) {
+    const tag = script.match(/<script\b[^>]*>/i)?.[0] || "";
+    const isJsonLd = /application\/ld\+json/i.test(tag);
+    const isEmbeddedState = /(?:__NEXT_DATA__|__NUXT_DATA__|__PRELOADED_STATE__|__INITIAL_STATE__|__APOLLO_STATE__)/i.test(tag);
+    if (!isJsonLd && !isEmbeddedState) continue;
+
+    const raw = script.replace(/^<script[^>]*>/i, "").replace(/<\/script>$/i, "");
+    try {
+      const parsed = JSON.parse(raw);
+      const strings: string[] = [];
+      collectStrings(parsed, strings, new Set());
+      fragments.push(strings.join(" "));
+    } catch {
+      // Not valid JSON (e.g. a plain text ld+json edge case); skip it.
+    }
+  }
+
+  return fragments.join(" ").replace(/\s+/g, " ").trim();
+}
+
+/** Count URLs declared in a public sitemap. Never throws; 0 when none is reachable. */
+async function fetchSitemapPages(origin: string): Promise<number> {
+  const candidates = ["/sitemap.xml", "/sitemap_index.xml"];
+  for (const path of candidates) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7000);
+      const response = await fetch(`${origin}${path}`, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: { "User-Agent": "CMO-Agent-Audit/0.1 (sitemap check)" },
+      });
+      clearTimeout(timer);
+      if (!response.ok) continue;
+      const body = await response.text();
+      const count = (body.match(/<loc\b/gi) || []).length;
+      if (count > 0) return count;
+    } catch {
+      // Sitemap check is best-effort; ignore failures.
+    }
+  }
+  return 0;
+}
+
 function snapshotFromHtml(
   inputUrl: string,
   finalUrl: string,
   html: string,
   statusCode: number,
   loadTimeMs: number,
+  embeddedText: string,
 ): WebsiteSnapshot {
   const title = cleanText(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "");
   const htmlTag = html.match(/<html\b[^>]*>/i)?.[0] || "";
@@ -96,7 +177,12 @@ function snapshotFromHtml(
     .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
     .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ");
   const visibleText = cleanText(contentOnly);
-  const words = visibleText.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || [];
+  const mergedText = [visibleText, embeddedText].filter(Boolean).join(" ");
+  const words = mergedText.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || [];
+  const htmlWords = visibleText.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || [];
+  const contentSource: WebsiteSnapshot["contentSource"] = embeddedText
+    ? htmlWords.length ? "html+js" : "js"
+    : "html";
 
   return {
     url: inputUrl,
@@ -116,6 +202,8 @@ function snapshotFromHtml(
     schemaCount: (html.match(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>/gi) || []).length,
     loadTimeMs,
     statusCode,
+    contentSource,
+    sitemapPages: 0,
   };
 }
 
@@ -176,6 +264,8 @@ function buildFindings(snapshot: WebsiteSnapshot): Finding[] {
   if (snapshot.headings.h1.length === 0) add("h1-missing", "No primary heading detected", "Use one clear H1 that explains what the product does and for whom.", "high", "Writer");
   if (snapshot.headings.h1.length > 1) add("h1-multiple", "Multiple primary headings detected", `The page has ${snapshot.headings.h1.length} H1 elements; create one dominant page topic.`, "medium", "SEO");
   if (snapshot.wordCount < 500) add("thin-copy", "The homepage narrative is light", `About ${snapshot.wordCount} words were detected; deepen use cases, proof and objections.`, "medium", "Strategy");
+  if (snapshot.contentSource === "js") add("js-rendered", "Page content loads entirely in the browser", "Most of the visible copy is rendered by JavaScript, so crawlers see less. Add server-side rendering or static text for the core message.", "high", "Technical");
+  if (snapshot.sitemapPages === 0 && snapshot.wordCount < 500) add("sitemap-missing", "No sitemap detected", "Publish a sitemap so search and answer engines can discover every page.", "low", "Technical");
   if (snapshot.schemaCount === 0) add("schema-missing", "No structured data detected", "Add Organization, WebSite and Product or SoftwareApplication schema where accurate.", "high", "GEO");
   if (!snapshot.canonical) add("canonical-missing", "Canonical URL is not declared", "Declare the preferred homepage URL to consolidate indexing signals.", "medium", "Technical");
   if (!snapshot.hasOpenGraph) add("og-missing", "Social preview metadata is incomplete", "Add Open Graph title, description and image for consistent sharing.", "low", "Social");
@@ -189,7 +279,9 @@ function buildFindings(snapshot: WebsiteSnapshot): Finding[] {
 
 export async function analyzeWebsite(inputUrl: string): Promise<AnalysisReport> {
   const fetched = await fetchWebsite(inputUrl);
-  const snapshot = snapshotFromHtml(inputUrl, fetched.finalUrl, fetched.html, fetched.statusCode, fetched.loadTimeMs);
+  const embeddedText = collectEmbeddedText(fetched.html);
+  const snapshot = snapshotFromHtml(inputUrl, fetched.finalUrl, fetched.html, fetched.statusCode, fetched.loadTimeMs, embeddedText);
+  snapshot.sitemapPages = await fetchSitemapPages(new URL(fetched.finalUrl).origin);
   const scores = scoreSnapshot(snapshot);
   const findings = buildFindings(snapshot);
   const overallScore = Math.round(scores.seo * 0.3 + scores.content * 0.25 + scores.geo * 0.2 + scores.technical * 0.25);

@@ -7,11 +7,18 @@ An original, approval-first AI CMO MVP for startups and SaaS companies. Enter a 
 - Live public-homepage fetch and analysis
 - SEO, content, GEO, technical and distribution scoring
 - Six specialist agent views: Strategy, SEO, GEO, Writer, Social and Technical
+- **AI team chat** — ask the agents questions about the scan (works instantly, free)
 - Prioritized findings and an interactive human approval queue
-- Optional OpenAI executive-summary enhancement
+- **Favicon + live-site confirmation** (title, final URL, word count, sitemap pages)
+- **JS-heavy site reading** — extracts Next.js/Nuxt/JSON-LD data without a browser, plus sitemap page count
+- Optional executive-summary enhancement via any OpenAI-compatible provider
 - Deterministic local strategy engine when no API key is configured
 - Responsive dashboard for desktop and mobile
 - SSRF controls, redirect validation, response-size caps and request timeouts
+
+## AI: free by default, richer on demand
+
+No API key is required — scoring and the agent team chat run fully on a deterministic local engine at zero cost. To get AI-written replies, set any OpenAI-compatible provider in `.env` (see `.env.example` for free Gemini, Groq and OpenRouter options).
 
 ## Stack
 
