@@ -116,6 +116,7 @@ export default function HomePage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
+  const [expandedDraft, setExpandedDraft] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!loading) return;
@@ -370,7 +371,17 @@ export default function HomePage() {
                     return (
                       <article className={`approval-row ${isApproved ? "approved" : ""}`} key={action.id}>
                         <button className="approval-check" onClick={() => toggleApproval(action.id)} aria-label={isApproved ? "Undo approval" : "Approve action"}>{isApproved && <Check size={15} weight="bold" />}</button>
-                        <div className="approval-copy"><div><h3>{action.title}</h3><span>{action.agent}</span></div><p>{action.description}</p><div className="action-meta"><span className={`impact ${action.impact.toLowerCase()}`}>{action.impact} impact</span><span>{action.effort} effort</span></div></div>
+                        <div className="approval-copy"><div><h3>{action.title}</h3><span>{action.agent}</span></div><p>{action.description}</p>
+                          {action.draft && (
+                            <div className="draft-wrap">
+                              <button className="draft-toggle" type="button" onClick={() => setExpandedDraft((cur) => { const n = new Set(cur); n.has(action.id) ? n.delete(action.id) : n.add(action.id); return n; })}>
+                                <Article size={14} />{expandedDraft.has(action.id) ? "Hide draft" : "View generated draft"}
+                              </button>
+                              {expandedDraft.has(action.id) && <pre className="draft-content">{action.draft}</pre>}
+                            </div>
+                          )}
+                          <div className="action-meta"><span className={`impact ${action.impact.toLowerCase()}`}>{action.impact} impact</span><span>{action.effort} effort</span></div>
+                        </div>
                         <button className={`approve-button ${isApproved ? "done" : ""}`} onClick={() => toggleApproval(action.id)}>{isApproved ? <><CheckCircle size={17} weight="fill" />Approved</> : <>Review & approve<ArrowRight size={15} /></>}</button>
                       </article>
                     );

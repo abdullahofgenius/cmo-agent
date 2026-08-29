@@ -324,3 +324,9 @@ footer > span:last-child { margin-left: auto; }
 .chat-form input::placeholder { color: #6d6f83; }
 .chat-form button { width: 50px; height: 50px; flex: 0 0 50px; border: none; border-radius: 14px; color: #fff; background: linear-gradient(135deg,#7c6dff,#54d99a); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .chat-form button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* --- Reviewable generated drafts --- */
+.draft-wrap { margin-top: 9px; }
+.draft-toggle { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 1px solid #2a2d42; color: #9b8cff; font-size: 12px; font-weight: 600; padding: 6px 11px; border-radius: 9px; cursor: pointer; }
+.draft-toggle:hover { background: #232536; }
+.draft-content { display: block; margin: 9px 0 0; padding: 12px; background: #14151f; border: 1px solid #232536; border-radius: 10px; color: #cfd1de; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
