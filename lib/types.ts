@@ -19,6 +19,10 @@ export interface WebsiteSnapshot {
   schemaCount: number;
   loadTimeMs: number;
   statusCode: number;
+  /** How page content was read: raw HTML only, JS-embedded data, or both. */
+  contentSource: "html" | "js" | "html+js";
+  /** Number of URLs declared in the sitemap (0 when none is detected). */
+  sitemapPages: number;
 }
 
 export interface Finding {

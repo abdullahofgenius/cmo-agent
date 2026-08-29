@@ -16,6 +16,8 @@ import {
   ListChecks,
   MagnifyingGlass,
   Megaphone,
+  PaperPlaneRight,
+  Robot,
   RocketLaunch,
   ShieldCheck,
   Sparkle,
@@ -28,6 +30,12 @@ import {
 } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { AgentResult, AnalysisReport, Finding } from "@/lib/types";
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  agent?: string;
+}
 
 const previewAgents = [
   { id: "strategy", name: "Strategy", specialty: "Builds your growth roadmap", accent: "#9b8cff", icon: Compass },
@@ -79,6 +87,24 @@ function SeverityBadge({ severity }: { severity: Finding["severity"] }) {
   return <span className={`severity ${severity}`}>{severity === "high" && <WarningCircle size={13} weight="fill" />}{label}</span>;
 }
 
+function SiteIdentity({ host }: { host: string }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  return (
+    <>
+      {imgFailed ? (
+        <span className="favicon-fallback">{host.charAt(0).toUpperCase()}</span>
+      ) : (
+        <img
+          className="favicon-img"
+          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`}
+          alt=""
+          onError={() => setImgFailed(true)}
+        />
+      )}
+    </>
+  );
+}
+
 export default function HomePage() {
   const [url, setUrl] = useState("");
   const [report, setReport] = useState<AnalysisReport | null>(null);
@@ -87,6 +113,9 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [approved, setApproved] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
 
   useEffect(() => {
     if (!loading) return;
@@ -126,6 +155,29 @@ export default function HomePage() {
       else next.add(id);
       return next;
     });
+  }
+
+  async function sendChat(event: FormEvent) {
+    event.preventDefault();
+    const text = chatInput.trim();
+    if (!text || chatBusy || !report) return;
+    setChatInput("");
+    setChatMessages((messages) => [...messages, { role: "user", text }]);
+    setChatBusy(true);
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, report }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "The team could not reply.");
+      setChatMessages((messages) => [...messages, { role: "assistant", text: data.reply, agent: data.agent }]);
+    } catch (err) {
+      setChatMessages((messages) => [...messages, { role: "assistant", text: err instanceof Error ? err.message : "The team could not reply right now." }]);
+    } finally {
+      setChatBusy(false);
+    }
   }
 
   return (
@@ -258,9 +310,11 @@ export default function HomePage() {
             <div id="results" className="results-wrap">
               <section className="results-header">
                 <div>
-                  <div className="domain-chip"><span className="favicon-fallback">{report.snapshot.host.charAt(0).toUpperCase()}</span>{report.snapshot.host}<CheckCircle size={15} weight="fill" /></div>
+                  <div className="domain-chip"><SiteIdentity host={report.snapshot.host} />{report.snapshot.host}<CheckCircle size={15} weight="fill" /></div>
                   <h2>Your growth brief is ready.</h2>
-                  <p>Analyzed {report.snapshot.wordCount.toLocaleString()} words, {report.snapshot.links.internal + report.snapshot.links.external} links and {report.snapshot.headings.h1.length + report.snapshot.headings.h2.length + report.snapshot.headings.h3Count} headings.</p>
+                  <p className="confirmed-source">Confirmed live site: <strong>{report.snapshot.title || report.snapshot.finalUrl}</strong> · {report.snapshot.finalUrl}</p>
+                  <p>Analyzed {report.snapshot.wordCount.toLocaleString()} words, {report.snapshot.links.internal + report.snapshot.links.external} links and {report.snapshot.headings.h1.length + report.snapshot.headings.h2.length + report.snapshot.headings.h3Count} headings
+                  {report.snapshot.sitemapPages > 0 && <> · {report.snapshot.sitemapPages} sitemap pages</>}.</p>
                 </div>
                 <button className="secondary-button" onClick={() => { setReport(null); setUrl(""); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Globe size={17} />Analyze another site</button>
               </section>
@@ -322,6 +376,43 @@ export default function HomePage() {
                     );
                   })}
                 </div>
+              </section>
+
+              <section className="team-chat" id="chat">
+                <div className="section-heading compact">
+                  <div><span className="section-kicker">AI TEAM CHAT</span><h2>Talk to your growth team.</h2><p>Ask Strategy, SEO, GEO, Writer, Social or Technical anything about this scan. No setup needed — replies work instantly and are enhanced by a free AI model when connected.</p></div>
+                  <span className="live-data"><span />{report.llmEnhanced || report.agents.some(() => chatMessages.some((m) => m.role === "assistant")) ? "Team online" : "Free, no key needed"}</span>
+                </div>
+
+                <div className="chat-box">
+                  {chatMessages.length === 0 && (
+                    <div className="chat-empty">
+                      <Robot size={30} weight="duotone" />
+                      <p>Try asking: <em>"is this the right site?"</em> · <em>"what should I do first?"</em> · <em>"how's my SEO?"</em> · <em>"write a meta description"</em></p>
+                    </div>
+                  )}
+                  {chatMessages.map((message, index) => (
+                    <div key={index} className={`chat-msg ${message.role}`}>
+                      {message.role === "assistant" && <span className="chat-avatar"><Robot size={15} weight="duotone" /></span>}
+                      <div className="chat-bubble">
+                        {message.agent && <strong>{message.agent}</strong>}
+                        <p style={{ whiteSpace: "pre-line" }}>{message.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                  {chatBusy && <div className="chat-msg assistant"><span className="chat-avatar"><Robot size={15} weight="duotone" /></span><div className="chat-bubble typing"><i /><i /><i /></div></div>}
+                </div>
+
+                <form className="chat-form" onSubmit={sendChat}>
+                  <input
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    placeholder="Ask your AI team about this site…"
+                    disabled={chatBusy}
+                    aria-label="Message the AI team"
+                  />
+                  <button type="submit" disabled={chatBusy || !chatInput.trim()} aria-label="Send"><PaperPlaneRight size={18} weight="bold" /></button>
+                </form>
               </section>
             </div>
           )}
