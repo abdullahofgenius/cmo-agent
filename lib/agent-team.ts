@@ -63,13 +63,28 @@ function topFindings(report: AnalysisReport, count: number): Finding[] {
   return [...report.findings].sort((a, b) => order[a.severity] - order[b.severity]).slice(0, count);
 }
 
+function brandName(snapshot: AnalysisReport["snapshot"]): string {
+  return snapshot.host.replace(/^www\./, "");
+}
+function stripBrand(title: string): string {
+  return title.replace(/^[\s\S]*?[–\-—|:|·]/, "").trim();
+}
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+function joinDraft(draft: string): string {
+  return draft.trim().replace(/^Draft search snippet \(~150 chars\):\n/, "").replace(/^JSON-LD to paste into <head>.*?:\n/, "").trim();
+}
+
 function deterministicReply(message: string, report: AnalysisReport): { reply: string; agentId: string } {
   const lower = message.toLowerCase().trim();
   const agent = bestAgent(message, report);
+  const s = report.snapshot;
+  const brand = brandName(s);
+  const topic = stripBrand(s.title) || "what you do";
 
-  // Confirm the detected site.
-  if (/(sahi|correct|confirm|detect|pata|saf|verify|right|yeh|this is|these are|sites|found|paka)/i.test(lower) && /(site|website|url|domain|host|sites|sahi|right|confirm|verify|pata|paka)/i.test(lower)) {
-    const s = report.snapshot;
+  // 1) Confirm the detected site (any message about the site being right / what was found).
+  if (/(is this (the|a) (right|correct)|sahi (site|website)|which (site|website)|kya ye|kya sahi|confirm|verify|did you (find|fetch|analyze)|kya pata|found|detect|ye (kya|saf)|reviewed|scan)/i.test(lower)) {
     const srcLabel =
       s.contentSource === "js"
         ? "content is rendered by JavaScript, so only embedded data could be read without a full browser"
@@ -82,8 +97,74 @@ function deterministicReply(message: string, report: AnalysisReport): { reply: s
     };
   }
 
-  // Overall score / summary.
-  if (/(score|scoring|readiness|kitna|rating|overall|kese|how (good|bad)|summarize|summary|bata)/i.test(lower) && !/(seo|geo|content|technical)/i.test(lower)) {
+  // 2) What to do first / priority.
+  if (/(first|pehle|priority|start|kaha se|kya kar|top|next step|sabse|important|do first|recommend)/i.test(lower)) {
+    const top = topFindings(report, 3);
+    const lines = top.map((f, i) => `${i + 1}. ${f.title} (${f.agent}) — ${f.detail}`).join("\n");
+    return {
+      agentId: "strategy",
+      reply: `Start with the highest-impact, lowest-effort moves first. My recommended order:\n\n${lines}\n\nI’d begin with finding #1, because it directly affects how search and answer engines understand the page. Tap any task below and it now shows a real generated draft you can review before approving.`,
+    };
+  }
+
+  // 3) Meta description draft.
+  if (/(meta description|meta |description|snippet|search snippet|draft)/i.test(lower)) {
+    const action = report.actions.find((a) => a.id === "meta-description");
+    if (action?.draft) {
+      return {
+        agentId: "writer",
+        reply: `Here’s a real meta description draft for ${brand}:\n\n${joinDraft(action.draft)}`,
+      };
+    }
+    return {
+      agentId: "writer",
+      reply: `Your current meta description is ${s.description ? `"${s.description.slice(0, 100)}${s.description.length > 100 ? "…" : ""}"` : "missing"}. I’d rewrite it to lead with the audience outcome and stay within 120–170 characters. In the approval queue below, the “Draft a sharper homepage search snippet” task has a ready draft you can review.`,
+    };
+  }
+
+  // 4) Content / homepage narrative.
+  if (/(content|homepage|copy|narrative|headline|h1|hero|thin|enough content)/i.test(lower)) {
+    const action = report.actions.find((a) => a.id === "content-structure");
+    if (action?.draft) {
+      return {
+        agentId: "writer",
+        reply: `Here’s a homepage narrative outline I generated for ${brand}:\n\n${joinDraft(action.draft)}`,
+      };
+    }
+    return {
+      agentId: "writer",
+      reply: `The scan found only ${s.wordCount} visible words — that’s thin for a homepage. I’d build a problem → solution → proof → objection → CTA structure. The “Build an intent-led homepage narrative” task below now has a full generated outline for you to review.`,
+    };
+  }
+
+  // 5) Schema / structured data (GEO / Technical).
+  if (/(schema|structured|json-ld|jsonld|data|geo|answer engine|chatgpt cite|machine-readable)/i.test(lower)) {
+    const action = report.actions.find((a) => a.id === "schema");
+    if (action?.draft) {
+      return {
+        agentId: "geo",
+        reply: `Here’s ready-to-paste JSON-LD schema for ${brand}:\n\n${joinDraft(action.draft)}`,
+      };
+    }
+    return {
+      agentId: "geo",
+      reply: `${s.schemaCount === 0 ? "No structured data was detected on the homepage." : "Structured data was detected."} Adding Organization + WebSite + Service schema makes it easier for search engines and AI answers (ChatGPT, Gemini, Copilot) to cite you accurately. Check the “Add organization and product schema” task below for a generated example.`,
+    };
+  }
+
+  // 6) SEO specifics.
+  if (/(seo|search|keyword|rank|title|backlink|google)/i.test(lower)) {
+    const seoAction = report.actions.find((a) => a.id === "meta-description");
+    const title = s.title ? `Your title is "${s.title}" (${s.title.length} chars).` : "No title detected.";
+    const titleNote = s.title && s.title.length > 65 ? " It’s a bit long — aim for ~60 chars so Google doesn’t truncate it." : "";
+    return {
+      agentId: "seo",
+      reply: `SEO score: ${report.scores.seo}/100.\n\n${title}${titleNote}\n· Meta description: ${s.description ? `${s.description.length} chars` : "missing"}\n· H1s: ${s.headings.h1.length} · Internal links: ${s.links.internal} · Sitemap: ${s.sitemapPages} pages\n\n${seoAction?.draft ? `Want a better search snippet? The “Draft a sharper homepage search snippet” task below has a ready draft.` : ""}`,
+    };
+  }
+
+  // 7) Overall score / summary.
+  if (/(score|readiness|kitna|rating|overall|kese|how (good|bad)|summarize|summary|bata|result)/i.test(lower)) {
     const r = report.scores;
     return {
       agentId: "strategy",
@@ -91,27 +172,34 @@ function deterministicReply(message: string, report: AnalysisReport): { reply: s
     };
   }
 
-  // What to do first.
-  if (/(first|pehle|priority|start|kaha se|kya kar|top|next step|sabse|important)/i.test(lower)) {
-    const top = topFindings(report, 3);
-    const lines = top.map((f, i) => `${i + 1}. ${f.title} (${f.agent}) — ${f.detail}`).join("\n");
+  // 8) Social.
+  if (/(social|twitter|x |linkedin|instagram|tiktok|post|share|channel|whatsapp)/i.test(lower)) {
+    const action = report.actions.find((a) => a.id === "social-preview");
+    return {
+      agentId: "social",
+      reply: action?.draft
+        ? `Here’s the social-card metadata for ${brand} so your links share cleanly:\n\n${joinDraft(action.draft)}`
+        : `For social, I focus on turning one approved insight into channel-native posts. Tell me a topic and I’ll sketch a LinkedIn post and an X post.`,
+    };
+  }
+
+  // 9) Technical.
+  if (/(technical|code|performance|speed|slow|render|javascript|viewport|https|server|bug|fix)/i.test(lower)) {
+    return {
+      agentId: "technical",
+      reply: `Technical score: ${report.scores.technical}/100.\n· Content source: ${s.contentSource}${s.contentSource !== "html" ? " — the page depends on JS, which weakens what crawlers see" : ""}\n· Uses HTTPS: ${s.finalUrl.startsWith("https://") ? "yes" : "no"} · Load time: ${s.loadTimeMs}ms\n\n${s.contentSource === "js" ? "Biggest technical win: server-render the core message (or add static text) so search engines read it." : "Core technical signals look solid."}`,
+    };
+  }
+
+  // 10) Strategy / plan / general.
+  if (/(strategy|plan|roadmap|growth|sprint|approach|do (you|we)|kya|how|what)/i.test(lower)) {
     return {
       agentId: "strategy",
-      reply: `Start with the highest-impact, lowest-effort moves first. My recommended order:\n\n${lines}\n\nI’d begin with finding #1, because it directly affects how search and answer engines understand the page. Approve that in the queue and I’ll turn it into a concrete task.`,
+      reply: `For ${brand}, I’d run a 4-week sprint: 1) fix the clearest discovery gap (${topFindings(report, 1)[0]?.title || "title/meta"}), 2) build out ${topic} into 4–6 high-intent pages, 3) turn your best use case into 3–4 social posts, 4) add schema so AI answers can cite you.\n\nEach item is in the approval queue below with a real draft to review. Ask me about any specific one and I’ll go deeper.`,
     };
   }
 
-  // Ask for a draft (writer).
-  if (/(write|draft|likh|content|copy|article|snippet|describe|create)/i.test(lower)) {
-    const s = report.snapshot;
-    const angle = s.headings.h1[0] || s.title || s.host;
-    return {
-      agentId: "writer",
-      reply: `Here’s a starting draft direction for ${s.host}, built from what I detected:\n\nLead: one clear sentence naming who you help and the outcome you deliver (anchor: "${angle}").\nBody: add the problem → your solution → a proof/use-case → an objection you answer.\nClose: one clear next step for the visitor.\n\nWant me to expand this into a full homepage snippet or a single blog outline?`,
-    };
-  }
-
-  // Agent-specific explanation (fall through from bestAgent).
+  // Fallback: agent-specific explanation.
   const findingsForAgent = report.findings.filter((f) => f.agent.toLowerCase() === agent.id);
   const scoreForAgent =
     agent.id === "seo" ? report.scores.seo
@@ -119,14 +207,12 @@ function deterministicReply(message: string, report: AnalysisReport): { reply: s
         : agent.id === "writer" ? report.scores.content
           : agent.id === "technical" ? report.scores.technical
             : Math.round((report.scores.seo + report.scores.content + report.scores.geo + report.scores.technical) / 4);
-
   if (findingsForAgent.length) {
     return {
       agentId: agent.id,
       reply: `I’m ${agent.name}. My focus: ${agent.specialty}. My current read on this site scores ${scoreForAgent}/100.\n\n${findingsForAgent.slice(0, 2).map((f) => `· ${f.title} — ${f.detail}`).join("\n")}\n\nAsk me a specific question (like "what should the meta description say?" or "is the content enough?") and I’ll go deeper.`,
     };
   }
-
   return {
     agentId: agent.id,
     reply: `I’m ${agent.name}. My focus is ${agent.specialty.toLowerCase()}, and I currently score this area ${scoreForAgent}/100. Ask me something specific and I’ll break down the next best move.`,

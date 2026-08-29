@@ -41,6 +41,8 @@ export interface GrowthAction {
   impact: "High" | "Medium";
   effort: "Low" | "Medium" | "High";
   state: "needs approval" | "ready";
+  /** Actual generated deliverable for this task, so you have something real to review. */
+  draft?: string;
 }
 
 export interface AgentResult {
